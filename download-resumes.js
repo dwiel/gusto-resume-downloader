@@ -9,8 +9,7 @@ async function downloadResumes() {
   
   const browser = await chromium.launchPersistentContext(userDataDir, {
     headless: false,
-    acceptDownloads: true,
-    downloadsPath: './downloads'
+    acceptDownloads: true
   });
   
   const page = await browser.newPage();
