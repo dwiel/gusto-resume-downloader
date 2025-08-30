@@ -1,0 +1,7 @@
+config.json
+downloaded-resumes/
+node_modules/
+browser-session/
+debug-*.png
+*.log
+.DS_Store

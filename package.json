@@ -1,0 +1,13 @@
+{
+  "name": "gusto-resume-downloader",
+  "version": "1.0.0",
+  "description": "Automate downloading resumes from Gusto",
+  "main": "download-resumes.js",
+  "scripts": {
+    "start": "node download-resumes.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "playwright": "^1.40.0"
+  }
+}
