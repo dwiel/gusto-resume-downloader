@@ -8,7 +8,7 @@ async function downloadResumes() {
   const userDataDir = './browser-session';
   
   const browser = await chromium.launchPersistentContext(userDataDir, {
-    headless: false, // Set to true once you're confident it works
+    headless: false,
     acceptDownloads: true,
     downloadsPath: './downloads'
   });
@@ -105,6 +105,7 @@ async function downloadResumes() {
     // Process each job posting
     let totalApplicants = 0;
     let totalResumesDownloaded = 0;
+    let totalResumesSkipped = 0;
     
     for (let i = 0; i < jobPostingLinks.length; i++) {
       const job = jobPostingLinks[i];
@@ -135,6 +136,19 @@ async function downloadResumes() {
       // Additional wait to ensure data is loaded
       await page.waitForTimeout(2000);
       
+      // Change items per page to 100 for more efficient processing
+      try {
+        const itemsPerPageDropdown = await page.getByLabel('Items per page');
+        if (itemsPerPageDropdown) {
+          await itemsPerPageDropdown.selectOption('100');
+          console.log('  Changed items per page to 100');
+          // Wait for the table to reload with more items
+          await page.waitForTimeout(3000);
+        }
+      } catch (e) {
+        console.log('  Could not change items per page, continuing with default');
+      }
+      
       let currentPage = 1;
       let hasMorePages = true;
       
@@ -156,6 +170,18 @@ async function downloadResumes() {
         // Process each applicant
         for (const applicant of applicantLinks) {
           console.log(`  Processing ${applicant.name}...`);
+          
+          // Check if we already have this resume BEFORE loading the page
+          const sanitizedName = applicant.name.replace(/[^a-z0-9]/gi, '_').replace(/_+/g, '_');
+          const sanitizedJob = job.title.replace(/[^a-z0-9]/gi, '_').replace(/_+/g, '_');
+          const fileName = `${sanitizedJob}_${sanitizedName}_resume.pdf`;
+          const filePath = path.join(downloadsDir, fileName);
+          
+          if (fs.existsSync(filePath)) {
+            console.log(`    ⏭️  Resume already exists, skipping`);
+            totalResumesSkipped++;
+            continue;
+          }
           
           try {
             // Open applicant in new tab to avoid losing pagination
@@ -203,10 +229,6 @@ async function downloadResumes() {
                     await resumePage.keyboard.press('Meta+s'); // Mac
                     
                     const download = await downloadPromise;
-                    const sanitizedName = applicant.name.replace(/[^a-z0-9]/gi, '_').replace(/_+/g, '_');
-                    const sanitizedJob = job.title.replace(/[^a-z0-9]/gi, '_').replace(/_+/g, '_');
-                    const fileName = `${sanitizedJob}_${sanitizedName}_resume.pdf`;
-                    const filePath = path.join(downloadsDir, fileName);
                     
                     await download.saveAs(filePath);
                     console.log(`    ✓ Downloaded resume`);
@@ -217,11 +239,6 @@ async function downloadResumes() {
                     
                     const response = await resumePage.goto(resumeUrl);
                     const buffer = await response.body();
-                    
-                    const sanitizedName = applicant.name.replace(/[^a-z0-9]/gi, '_').replace(/_+/g, '_');
-                    const sanitizedJob = job.title.replace(/[^a-z0-9]/gi, '_').replace(/_+/g, '_');
-                    const fileName = `${sanitizedJob}_${sanitizedName}_resume.pdf`;
-                    const filePath = path.join(downloadsDir, fileName);
                     
                     fs.writeFileSync(filePath, buffer);
                     console.log(`    ✓ Downloaded resume via direct fetch`);
@@ -255,12 +272,33 @@ async function downloadResumes() {
         }
         
         // Check if there's a next page
-        const nextButton = await page.$('button[aria-label="Navigate to next page"]:not([disabled])');
-        if (nextButton) {
-          await nextButton.click();
-          await page.waitForLoadState('domcontentloaded');
-          currentPage++;
-        } else {
+        // Look for the "Navigate to next page" button - it's the 3rd button in the pagination list
+        try {
+          const nextButton = await page.getByRole('button', { name: 'Navigate to next page' });
+          const isDisabled = await nextButton.isDisabled();
+          
+          if (!isDisabled) {
+            console.log(`Navigating to page ${currentPage + 1}...`);
+            await nextButton.click();
+            
+            // Wait for the table to update with new data
+            await page.waitForTimeout(2000);
+            
+            // Wait for the loading to complete
+            try {
+              await page.waitForSelector('table tbody tr td:nth-child(2) a', { timeout: 10000 });
+            } catch (e) {
+              console.log('  Timeout waiting for applicants to load on next page');
+            }
+            
+            currentPage++;
+          } else {
+            console.log('No more pages to process');
+            hasMorePages = false;
+          }
+        } catch (e) {
+          // If we can't find the next button, assume we're on the last page
+          console.log('No next button found - assuming last page');
           hasMorePages = false;
         }
       }
@@ -270,6 +308,7 @@ async function downloadResumes() {
     console.log(`Total job postings processed: ${jobPostingLinks.length}`);
     console.log(`Total applicants found: ${totalApplicants}`);
     console.log(`Total resumes downloaded: ${totalResumesDownloaded}`);
+    console.log(`Total resumes skipped (already existed): ${totalResumesSkipped}`);
     console.log(`Resumes saved to: ${path.resolve(downloadsDir)}`);
     
   } catch (error) {
