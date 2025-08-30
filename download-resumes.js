@@ -198,63 +198,31 @@ async function downloadResumes() {
             // Wait a bit for all content to load
             await newPage.waitForTimeout(1500);
             
-            // Look for resume link - try multiple selectors
-            let resumeLink = await newPage.$('a:has-text("View"):near(h4:has-text("Resume"))');
+            // Extract PDF URL directly from the page
+            const pdfUrl = await newPage.evaluate(() => {
+              const pdfLink = document.querySelector('a[href*=".pdf"]');
+              return pdfLink ? pdfLink.href : null;
+            });
             
-            // If first selector doesn't work, try another approach
-            if (!resumeLink) {
-              resumeLink = await newPage.$('a[href*=".pdf"]');
-            }
-            
-            if (resumeLink) {
-              const resumeUrl = await resumeLink.getAttribute('href');
-              
-              if (resumeUrl) {
-                try {
-                  // Resume opens in a new tab, so we need to wait for that
-                  const newTabPromise = browser.waitForEvent('page');
-                  
-                  // Click the resume link
-                  await resumeLink.click();
-                  
-                  // Wait for the new tab to open
-                  const resumePage = await newTabPromise;
-                  await resumePage.waitForLoadState('domcontentloaded');
-                  
-                  // Now try to trigger download from the new tab
-                  try {
-                    const downloadPromise = resumePage.waitForEvent('download', { timeout: 5000 });
-                    
-                    // The PDF should be displayed - try to trigger download with Ctrl+S
-                    await resumePage.keyboard.press('Meta+s'); // Mac
-                    
-                    const download = await downloadPromise;
-                    
-                    await download.saveAs(filePath);
-                    console.log(`    ✓ Downloaded resume`);
-                    totalResumesDownloaded++;
-                  } catch (downloadError) {
-                    // If Ctrl+S doesn't work, try getting the PDF content directly
-                    console.log(`    → Save shortcut didn't work, trying direct content fetch...`);
-                    
-                    const response = await resumePage.goto(resumeUrl);
-                    const buffer = await response.body();
-                    
-                    fs.writeFileSync(filePath, buffer);
-                    console.log(`    ✓ Downloaded resume via direct fetch`);
-                    totalResumesDownloaded++;
-                  }
-                  
-                  await resumePage.close();
-                  
-                } catch (error) {
-                  console.log(`    ✗ Resume processing failed: ${error.message}`);
+            if (pdfUrl) {
+              try {
+                // Download PDF directly via HTTP GET
+                const response = await newPage.request.get(pdfUrl);
+                const buffer = await response.body();
+                
+                // Verify it's a real PDF by checking the first 4 bytes
+                if (buffer.length >= 4 && buffer.toString('ascii', 0, 4) === '%PDF') {
+                  fs.writeFileSync(filePath, buffer);
+                  console.log(`    ✓ Downloaded resume`);
+                  totalResumesDownloaded++;
+                } else {
+                  console.log(`    ✗ Downloaded file is not a valid PDF`);
                 }
-              } else {
-                console.log(`    ✗ Resume link found but no href`);
+              } catch (error) {
+                console.log(`    ✗ Resume download failed: ${error.message}`);
               }
             } else {
-              console.log(`    ✗ No resume found`);
+              console.log(`    ✗ No resume PDF link found`);
               // Debug: save screenshot for first few missing resumes
               if (totalApplicants <= 3) {
                 await newPage.screenshot({ path: `debug-applicant-${applicant.name.replace(/[^a-z0-9]/gi, '_')}.png` });
